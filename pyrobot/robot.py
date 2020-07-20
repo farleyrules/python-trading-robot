@@ -3,6 +3,7 @@ import time as time_true
 import pprint
 import pathlib
 import pandas as pd
+import pandas_market_calendars as mcal
 
 from datetime import time
 from datetime import datetime
@@ -58,6 +59,63 @@ class PyRobot():
         self._bar_size = None
         self._bar_type = None
 
+        """ The code was added below to obtain market hours data from the NYSE
+        
+        Pip Install: pip install pandas_market_calendars
+        Github site: https://github.com/rsheftel/pandas_market_calendars
+        Github usage: https://github.com/rsheftel/pandas_market_calendars/blob/master/examples/usage.ipynb
+        
+        The calendar for the NYSE is obtained 
+        The calendar only contains actual days the market is open
+        The calendar does not include weekends and holidays
+
+        """
+
+        self.nyse = mcal.get_calendar('NYSE')
+        
+        # The market date, which is tested, is for today
+        self.market_date = datetime.today().replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0
+        )
+
+        # The hours of the market are returned in a Pandas DataFrame
+        # The market open and market close are included only for today
+        self.hours = self.nyse.schedule(start_date=self.market_date, end_date=self.market_date)
+
+        self.right_now = datetime.utcnow().timestamp()
+
+        if len(self.hours.index) > 0:
+            
+            # Market open is the value in the market_open column
+            self.market_open_column = self.hours['market_open']
+            self.market_open = self.market_open_column[0].to_pydatetime()
+            self.market_open_time = self.market_open.timestamp()
+            
+            # Market close is the value in the market_close column
+            self.market_close_column = self.hours['market_close']
+            self.market_close = self.market_close_column[0].to_pydatetime()
+            self.market_close_time = self.market_close.timestamp()
+
+            # Pre-Market opens 5 hours 30 minutes prior to the regular market
+            self.pre_market_open = self.market_open - timedelta(hours=5, minutes=30)
+            self.pre_market_open_time = self.pre_market_open.timestamp()
+
+            # Post-Market remaines open 4 hours after the regular market
+            self.post_market_close = self.market_close + timedelta(hours=4)
+            self.post_market_close_time = self.post_market_close.timestamp()
+
+        else:
+            # Without a market open and close, the market will not be open at all today
+            # All variables are set to seven days later (7 days)
+            self.market_open = self.market_date + timedelta(days=7)
+            self.market_open_time = self.market_open.timestamp()
+            self.market_close_time = self.market_open_time
+            self.pre_market_open_time = self.market_open_time
+            self.post_market_close_time = self.market_open_time
+
     def _create_session(self) -> TDClient:
         """Start a new session.
 
@@ -82,9 +140,50 @@ class PyRobot():
 
         return td_client
 
+    # Additional properties add by David Farley on 7/18/2020
+
+    @property
+    def regular_market_open(self) -> bool:
+        
+        market_open_time = self.market_open_time
+        market_close_time = self.market_close_time
+        right_now = self.right_now
+
+        if market_open_time <= right_now <= market_close_time:
+            return True
+        else:
+            return False
+
     @property
     def pre_market_open(self) -> bool:
-        """Checks if pre-market is open.
+        
+        pre_market_open_time = self.pre_market_open_time
+        pre_market_close_time = self.market_open_time
+        right_now = self.right_now
+
+        if pre_market_open_time <= right_now <= pre_market_close_time:
+            return True
+        else:
+            return False
+
+    @property
+    def post_market_open(self) -> bool:
+        
+        post_market_open_time = self.market_close_time
+        post_market_close_time = self.post_market_close_time
+        right_now = self.right_now
+
+        if post_market_open_time <= right_now <= post_market_close_time:
+            return True
+        else:
+            return False
+
+
+    """ Ignore previous properties
+
+    @property
+    def pre_market_open(self) -> bool:
+        "" Checks if pre-market is open.
 
         Uses the datetime module to create US Pre-Market Equity hours in
         UTC time.
@@ -104,30 +203,37 @@ class PyRobot():
         ----
         bool -- True if pre-market is open, False otherwise.
 
-        """
+        ""
 
-        pre_market_start_time = datetime.utcnow().replace(
-            hour=8,
-            minute=00,
-            second=00
-        ).timestamp()
+        right_now_weekday = datetime.utcnow().weekday()
 
-        market_start_time = datetime.utcnow().replace(
-            hour=13,
-            minute=30,
-            second=00
-        ).timestamp()
+        if right_now_weekday < 5:
 
-        right_now = datetime.utcnow().timestamp()
+            pre_market_start_time = datetime.utcnow().replace(
+                hour=8,
+                minute=00,
+                second=00
+            ).timestamp()
 
-        if market_start_time >= right_now >= pre_market_start_time:
-            return True
+            market_start_time = datetime.utcnow().replace(
+                hour=13,
+                minute=30,
+                second=00
+            ).timestamp()
+
+            right_now = datetime.utcnow().timestamp()
+
+            if market_start_time >= right_now >= pre_market_start_time:
+                return True
+            else:
+                return False
+
         else:
             return False
 
     @property
     def post_market_open(self):
-        """Checks if post-market is open.
+        "" Checks if post-market is open.
 
         Uses the datetime module to create US Post-Market Equity hours in
         UTC time.
@@ -147,30 +253,37 @@ class PyRobot():
         ----
         bool -- True if post-market is open, False otherwise.
 
-        """
+        ""
 
-        post_market_end_time = datetime.utcnow().replace(
-            hour=00,
-            minute=00,
-            second=00
-        ).timestamp()
+        right_now_weekday = datetime.utcnow().weekday()
 
-        market_end_time = datetime.utcnow().replace(
-            hour=20,
-            minute=00,
-            second=00
-        ).timestamp()
+        if right_now_weekday < 5:
 
-        right_now = datetime.utcnow().timestamp()
+            post_market_end_time = datetime.utcnow().replace(
+                hour=00,
+                minute=00,
+                second=00
+            ).timestamp()
 
-        if post_market_end_time >= right_now >= market_end_time:
-            return True
+            market_end_time = datetime.utcnow().replace(
+                hour=20,
+                minute=00,
+                second=00
+            ).timestamp()
+
+            right_now = datetime.utcnow().timestamp()
+
+            if post_market_end_time >= right_now >= market_end_time:
+                return True
+            else:
+                return False
+
         else:
             return False
 
     @property
     def regular_market_open(self):
-        """Checks if regular market is open.
+        "" Checks if regular market is open.
 
         Uses the datetime module to create US Regular Market Equity hours in
         UTC time.
@@ -190,26 +303,35 @@ class PyRobot():
         ----
         bool -- True if post-market is open, False otherwise.
 
-        """
+        ""
 
-        market_start_time = datetime.utcnow().replace(
-            hour=13,
-            minute=30,
-            second=00
-        ).timestamp()
+        right_now_weekday = datetime.utcnow().weekday()
 
-        market_end_time = datetime.utcnow().replace(
-            hour=20,
-            minute=00,
-            second=00
-        ).timestamp()
+        if right_now_weekday < 5:
 
-        right_now = datetime.utcnow().timestamp()
+            market_start_time = datetime.utcnow().replace(
+                hour=13,
+                minute=30,
+                second=00
+            ).timestamp()
 
-        if market_end_time >= right_now >= market_start_time:
-            return True
+            market_end_time = datetime.utcnow().replace(
+                hour=20,
+                minute=00,
+                second=00
+            ).timestamp()
+
+            right_now = datetime.utcnow().timestamp()
+
+            if market_end_time >= right_now >= market_start_time:
+                return True
+            else:
+                return False
+
         else:
             return False
+
+    """
 
     def create_portfolio(self) -> Portfolio:
         """Create a new portfolio.
@@ -946,8 +1068,6 @@ class PyRobot():
 
         if isinstance(accounts_response, dict):
 
-            account_dict = {}
-
             for account_type_key in accounts_response:
 
                 account_info = accounts_response[account_type_key]
@@ -956,6 +1076,13 @@ class PyRobot():
                 account_type = account_info['type']
                 account_current_balances = account_info['currentBalances']
                 # account_inital_balances = account_info['initialBalances']
+
+                """ 
+                Account dictionary must be initiated for each account type.
+                Otherwise the values that are placed in the account_lists are replaced
+                by the most recent values placed into the Account dictionary.
+                """
+                account_dict = {}
 
                 account_dict['account_number'] = account_id
                 account_dict['account_type'] = account_type
@@ -1000,8 +1127,6 @@ class PyRobot():
 
             for account in accounts_response:
 
-                account_dict = {}
-
                 for account_type_key in account:
 
                     account_info = account[account_type_key]
@@ -1010,6 +1135,13 @@ class PyRobot():
                     account_type = account_info['type']
                     account_current_balances = account_info['currentBalances']
                     # account_inital_balances = account_info['initialBalances']
+
+                    """ 
+                    Account dictionary must be initiated for each account type.
+                    Otherwise the values that are placed in the account_lists are replaced
+                    by the most recent values placed into the Account dictionary.
+                    """
+                    account_dict = {}
 
                     account_dict['account_number'] = account_id
                     account_dict['account_type'] = account_type
@@ -1152,8 +1284,6 @@ class PyRobot():
 
         if isinstance(positions_response, dict):
 
-            position_dict = {}
-
             for account_type_key in positions_response:
 
                 account_info = positions_response[account_type_key]
@@ -1162,6 +1292,14 @@ class PyRobot():
                 positions = account_info['positions']
 
                 for position in positions:
+                    
+                    """ 
+                    Position dictionary must be initiated for each position.
+                    Otherwise the values that are placed in the positions_lists are replaced
+                    by the most recent values placed into the Position dictionary.
+                    """
+                    position_dict = {}
+
                     position_dict['account_number'] = account_id
                     position_dict['average_price'] = position['averagePrice']
                     position_dict['market_value'] = position['marketValue']
@@ -1172,26 +1310,26 @@ class PyRobot():
                     position_dict['settled_long_quantity'] = position['settledLongQuantity']
                     position_dict['settled_short_quantity'] = position['settledShortQuantity']
 
-                    position_dict['symbol'] = position['instrument']['symbol']
-                    position_dict['cusip'] = position['instrument']['cusip']
                     position_dict['asset_type'] = position['instrument']['assetType']
-                    position_dict['sub_asset_type'] = position['instrument'].get(
-                        'subAssetType', ""
-                    )
-                    position_dict['description'] = position['instrument'].get(
-                        'description', ""
-                    )
-                    position_dict['type'] = position['instrument'].get(
-                        'type', ""
-                    )
+                    position_dict['cusip'] = position['instrument']['cusip']
+                    position_dict['symbol'] = position['instrument']['symbol']
+                    
+                    position_dict['description'] = position['instrument'].get('description', "")
+                    position_dict['type'] = position['instrument'].get('type', "")
+                    
+                    position_dict['option_put_or_call'] = position['instrument'].get('putCall', "")
+                    position_dict['option_underlying_symbol'] = position['instrument'].get('underlyingSymbol', "")
+                    position_dict['option_multiplier'] = position['instrument'].get('optionMultiplier', "")
+
+                    position_dict['fixed_income_maturity_date'] = position['instrument'].get('maturityDate', "")
+                    position_dict['fixed_income_variable_rate'] = position['instrument'].get('variableRate', "")
+                    position_dict['fixed_income_factor'] = position['instrument'].get('factor', "")
 
                     positions_lists.append(position_dict)
 
         elif isinstance(positions_response, list):
 
             for account in positions_response:
-
-                position_dict = {}
 
                 for account_type_key in account:
 
@@ -1201,6 +1339,14 @@ class PyRobot():
                     positions = account_info['positions']
 
                     for position in positions:
+                        
+                        """ 
+                        Position dictionary must be initiated for each position.
+                        Otherwise the values that are placed in the positions_lists are replaced
+                        by the most recent values placed into the Position dictionary.
+                        """
+                        position_dict = {}
+
                         position_dict['account_number'] = account_id
                         position_dict['average_price'] = position['averagePrice']
                         position_dict['market_value'] = position['marketValue']
@@ -1211,19 +1357,21 @@ class PyRobot():
                         position_dict['settled_long_quantity'] = position['settledLongQuantity']
                         position_dict['settled_short_quantity'] = position['settledShortQuantity']
 
-                        position_dict['symbol'] = position['instrument']['symbol']
-                        position_dict['cusip'] = position['instrument']['cusip']
                         position_dict['asset_type'] = position['instrument']['assetType']
-                        position_dict['sub_asset_type'] = position['instrument'].get(
-                            'subAssetType', ""
-                        )
-                        position_dict['description'] = position['instrument'].get(
-                            'description', ""
-                        )
-                        position_dict['type'] = position['instrument'].get(
-                            'type', ""
-                        )
+                        position_dict['cusip'] = position['instrument']['cusip']
+                        position_dict['symbol'] = position['instrument']['symbol']
+                        
+                        position_dict['description'] = position['instrument'].get('description', "")
+                        position_dict['type'] = position['instrument'].get('type', "")
+                        
+                        position_dict['option_put_or_call'] = position['instrument'].get('putCall', "")
+                        position_dict['option_underlying_symbol'] = position['instrument'].get('underlyingSymbol', "")
+                        position_dict['option_multiplier'] = position['instrument'].get('optionMultiplier', "")
 
+                        position_dict['fixed_income_maturity_date'] = position['instrument'].get('maturityDate', "")
+                        position_dict['fixed_income_variable_rate'] = position['instrument'].get('variableRate', "")
+                        position_dict['fixed_income_factor'] = position['instrument'].get('factor', "")
+                        
                         positions_lists.append(position_dict)
 
         return positions_lists
